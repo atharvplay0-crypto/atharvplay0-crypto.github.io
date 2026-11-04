@@ -1,0 +1,48 @@
+name: Sync CAS app-ads.txt
+
+on:
+  schedule:
+    - cron: "17 0 * * *"   # every day at ~05:47 IST (00:17 UTC)
+  workflow_dispatch:        # lets you run it manually from the Actions tab
+
+permissions:
+  contents: write
+  pages: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Download latest CAS app-ads.txt
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/cleveradssolutions/App-ads.txt/main/app-ads.txt -o app-ads.new
+
+          # Safety checks so a bad download never replaces the good file
+          head -n 1 app-ads.new | grep -q "^# CAS.ai" || { echo "Unexpected header, aborting"; exit 1; }
+          [ "$(wc -l < app-ads.new)" -gt 1000 ] || { echo "File too short, aborting"; exit 1; }
+
+          mv app-ads.new app-ads.txt
+
+      - name: Commit if changed
+        id: commit
+        run: |
+          if git diff --quiet -- app-ads.txt; then
+            echo "No changes."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add app-ads.txt
+            git commit -m "Sync app-ads.txt: $(head -n 1 app-ads.txt)"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger GitHub Pages rebuild
+        if: steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api -X POST "repos/${{ github.repository }}/pages/builds" || echo "Pages build request failed; it may still deploy on its own."
